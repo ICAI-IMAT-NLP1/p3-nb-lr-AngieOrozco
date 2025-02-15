@@ -29,10 +29,13 @@ class NaiveBayes:
             delta (float): Smoothing parameter for Laplace smoothing.
         """
         # TODO: Estimate class priors and conditional probabilities of the bag of words 
-        self.class_priors = None
-        self.vocab_size = None # Shape of the probability tensors, useful for predictions and conditional probabilities
-        self.conditional_probabilities = None
-        return
+       
+        self.class_priors = self.estimate_class_priors(labels)
+        
+
+        self.conditional_probabilities = self.estimate_conditional_probabilities(features, labels, delta)
+  
+        self.vocab_size = features.shape[1]
 
     def estimate_class_priors(self, labels: torch.Tensor) -> Dict[int, torch.Tensor]:
         """
@@ -45,7 +48,14 @@ class NaiveBayes:
             Dict[int, torch.Tensor]: A dictionary mapping class labels to their estimated prior probabilities.
         """
         # TODO: Count number of samples for each output class and divide by total of samples
-        class_priors: Dict[int, torch.Tensor] = None
+        class_priors: Dict[int, torch.Tensor] = {}
+        
+
+        counts = torch.bincount(labels.to(torch.int64))
+        length = labels.shape[0]
+
+        class_priors = {i: count.float() / length for i, count in enumerate(counts)}
+
         return class_priors
 
     def estimate_conditional_probabilities(
@@ -63,9 +73,26 @@ class NaiveBayes:
             Dict[int, torch.Tensor]: Conditional probabilities of each word for each class.
         """
         # TODO: Estimate conditional probabilities for the words in features and apply smoothing
-        class_word_counts: Dict[int, torch.Tensor] = None
+        class_word_counts: Dict[int, torch.Tensor] = {}
 
+        num_classes = len(torch.unique(labels))
+        vocab_size = features.shape[1]
+
+        for c in range(num_classes):
+            indices = torch.where(labels == c)[0]
+            class_features = features[indices]
+
+            word_counts = class_features.sum(dim=0)
+
+            # Aplicando suavizado de Laplace
+            smoothed_counts = word_counts + delta
+            total_words = smoothed_counts.sum()
+            conditional_probs = smoothed_counts / total_words
+            
+            class_word_counts[c] = conditional_probs
+        
         return class_word_counts
+
 
     def estimate_class_posteriors(
         self,
@@ -85,8 +112,21 @@ class NaiveBayes:
                 "Model must be trained before estimating class posteriors."
             )
         # TODO: Calculate posterior based on priors and conditional probabilities of the words
-        log_posteriors: torch.Tensor = None
+        log_posteriors = torch.zeros(len(self.class_priors))
+        
+        for c in self.class_priors:
+
+            log_prior = torch.log(self.class_priors[c])
+
+            log_conditional_probs = torch.log(self.conditional_probabilities[c])
+
+            log_likelihood = (feature * log_conditional_probs).sum()
+
+            log_posteriors[c] = log_prior + log_likelihood
+        
         return log_posteriors
+
+
 
     def predict(self, feature: torch.Tensor) -> int:
         """
@@ -105,7 +145,9 @@ class NaiveBayes:
             raise Exception("Model not trained. Please call the train method first.")
         
         # TODO: Calculate log posteriors and obtain the class of maximum likelihood 
-        pred: int = None
+        log_posteriors = self.estimate_class_posteriors(feature)
+        pred: int = torch.argmax(log_posteriors).item()
+        
         return pred
 
     def predict_proba(self, feature: torch.Tensor) -> torch.Tensor:
@@ -124,6 +166,8 @@ class NaiveBayes:
         if not self.class_priors or not self.conditional_probabilities:
             raise Exception("Model not trained. Please call the train method first.")
 
-        # TODO: Calculate log posteriors and transform them to probabilities (softmax)
-        probs: torch.Tensor = None
+        log_posteriors = self.estimate_class_posteriors(feature)
+
+        probs: torch.Tensor = torch.softmax(log_posteriors, dim=0)
+
         return probs
